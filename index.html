@@ -1,0 +1,430 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MovieHunt</title>
+    <link rel="icon" type="image/png" href="media/logo-MovieHunt.png">
+    <meta name="description"
+        content="SPARQL-QBE Demo: A user-friendly interface for querying movie databases, enhanced with visual elements and enriched data from The Movie Database (TMDb) API.">
+    <meta name="keywords" content="SPARQL-QBE, SPARQL, query by example, movies">
+    <meta name="author" content="Maria Foteini Troupi">
+    <meta name="copyright" content="2025 University of Crete - Computer Science Department">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+    <script>
+        // load data and normalize
+
+        function label_of(x) {
+            if (!x)
+                return x;
+            var index = x.indexOf(':');
+            if (index != -1 && index <= 4)
+                return x.slice(x.indexOf(':') + 1).replace(/_/g, ' ');
+            return x;
+        }
+
+        var props_order = ["rdf:type", "rdfs:label", "dbp:released", "dbo:genre", "dbo:director", "dbo:producer", "dbo:company", "dbo:starring"// version ckeck
+        ]
+
+        function parse_ttl(text) {
+            var parts = text.trim().split(/\s+/);
+            var data = {}
+
+            var index = 0;
+            while (index < parts.length) {
+
+                var x1 = parts[index++];
+                if (!data[x1])
+                    data[x1] = {};
+
+                var first = true;
+                while (first || parts[index++] == ';') {
+                    first = false;
+
+                    var x2 = parts[index++];
+                    if (!data[x1][x2])
+                        data[x1][x2] = [];
+
+                    var x3 = parts[index++];
+                    if (x3[0] == '"') {
+                        var str = x3.substring(1);
+                        while (str.indexOf('"') == -1) {
+                            str += " " + parts[index++];
+                        }
+                        str = str.replace(/"[^"]*$/, '');
+                        data[x1][x2].push(str);
+                    } else {
+                        data[x1][x2].push(x3);
+                    }
+                }
+            }
+
+            return data;
+        }
+
+        function normalize_data(data) {
+
+            count = 0;
+            count_props = 0;
+            rawspace = 0;
+
+            var local_props_order = props_order.slice();
+
+            for (var id in data) {
+                if (Object.keys(data[id]).length <= 1) {
+                    delete data[id];
+                    continue;
+                }
+                for (var prop in data[id]) {
+                    var values = data[id][prop]
+                    if (typeof (values) == 'string')
+                        data[id][prop] = [values]
+                }
+
+                if (data[id]["a"]) {
+                    data[id]["rdf:type"] = data[id]["a"];
+                    delete data[id]["a"]
+                }
+
+                if (!data[id]["rdfs:label"])
+                    data[id]["rdfs:label"] = [label_of(id)];
+
+                for (var prop in data[id]) {
+                    if (!local_props_order.includes(prop))
+                        local_props_order.push(prop);
+                }
+
+                var l = []
+                for (var i of local_props_order) {
+                    var values = data[id][i]
+                    if (!values)
+                        continue;
+                    if (typeof (values) == 'string')
+                        values = [values]
+                    for (var v of values) {
+                        if (v == null || v.trim().length == 0)
+                            continue;
+                        l.push([i, v, label_of(v)])
+                    }
+                }
+                data[id]["attrs"] = l;
+
+                text = [];
+                for (var attr of data[id]["attrs"]) {
+                    //if (attr[0] == 'rdf:type') continue;
+                    if (attr[2] == null)
+                        continue;
+                    text.push(attr[2])
+                }
+                data[id]["raw"] = text.join(" ").toLowerCase();
+
+                count += 1;
+                count_props += l.length;
+                rawspace += data[id]["raw"].length
+            }
+
+            for (var id in data) {
+                for (var i of data[id].attrs) {
+                    if (i[1] in data)
+                        i[2] = data[i[1]]["rdfs:label"]
+                }
+            }
+
+            console.groupCollapsed("data stats");
+            console.groupEnd();
+        }
+        //normalize_data(data);
+    </script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+</head>
+
+<body>
+    <div id="project">
+        <div class="main">
+            <div class="first">
+                <div class="name" onclick="popup_home()"><img src="media/MovieHundWhite.svg" height="45px" alt="SPARQL-QBE"></div>
+                <div id="path" class="path"></div>
+            </div>
+            <div>
+                <span></span>
+            </div>
+            <div class="toolbar">
+                <div class="button button-dark" tabindex="0" role="button" onclick="popup_help();">Help</div>
+                <div class="button button-dark" tabindex="0" role="button" onclick="popup_about();">About</div>
+            </div>
+        </div>
+    </div>
+    <div id="header" hidden>
+        <div class="main">
+            <div id="mode" class="switch">
+                <div class="switch-item" data-mode="keyword" onclick="change_mode('keyword');" data-selected>
+                    Select Filters
+                </div>
+                <div class="switch-item" data-mode="system" onclick="change_mode('system');">
+                    Results
+                </div>
+            </div>
+            <div>
+                <span></span>
+            </div>
+            <div class="toolbar">
+                <div class="button" tabindex="0" role="button" onclick="reset_all();">Reset All</div>
+                <!-- <div class="button" tabindex="0" role="button" onclick="reset_all_exit();">Exit</div> -->
+            </div>
+        </div>
+    </div>
+    <div class="main-container-content" style="min-height: 90vh;">
+        <div id="page" class="main" hidden>
+            <div id="filter">
+                <!-- <div class="title">
+                    Search
+                    <span class="expl">keyword search for examples</span>
+                    <span class="info" data-value="filter_info" style="color: white">?</span>
+                </div> -->
+                <div class="body">
+                    <div class="search_holder">
+                        <input type="search" id="search" spellcheck="false" placeholder="Search in SPARKQRL..." >
+                        <button id="search_button" class="searchicon button"></button>
+                    </div>
+                </div>
+            </div>
+            <div id="constrains">
+                <div class="title fw-bold">
+                    Constrains
+                    <span class="expl"></span>
+                    <span class="info" data-value="constrains_info"></span>
+                </div>
+                <div class="body"></div>
+            </div>
+            <div id="sparql">
+                <details>
+                    <summary class="title">SPARQL Query</summary>
+                    <div>
+                        <pre id="sparql_query"></pre>
+                    </div>
+                </details>
+            </div>
+            <div class="title">
+                Entities
+                <span class="expl">select positive and negative examples</span>
+                <span class="info" data-value="entities_info"></span>
+            </div>
+            <div class="toolbar">
+                <div class="switch" data-switch="info">
+                    <div class="switch-item" data-switch="label" data-selected>Label</div>
+                    <div class="switch-item" data-switch="details">Details</div>
+                </div>
+                <div class="switch" data-switch="cols">
+                    <div class="switch-item" data-switch="1">&nbsp;I &nbsp;</div>
+                    <div class="switch-item" data-switch="2">II</div>
+                    <div class="switch-item" data-switch="3" data-selected>III</div>
+                </div>
+            </div>
+            <div class="modal fade modal-lg" id="videoModal" tabindex="-1" aria-labelledby="youtubeVideoModal" aria-hidden="true">
+                <div class="modal-dialog">
+                    <div class="modal-content" id="modal">
+                        <div class="modal-header container">
+                            <div class="row">
+                                <div class="col-12 display-row">
+                                    <h2 class="modal-title white px-3" id="youtubeVideoModal"></h2>
+                                    <button type="button" class="btn-close-white btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="container-fluid">
+                            <div id="youtube-video" class="modal-body youtube-video row">
+                                <iframe width="560" height="315" src="" 
+                                    frameborder="0" allow="accelerometer; autoplay; clipboard-write; 
+                                    encrypted-media; gyroscope; picture-in-picture" allowfullscreen>
+                                </iframe>
+                            </div>
+                            <div id="error-message" style="display: none;">
+                                <p>Sorry, trailer is not available for this movie.</p>
+                                <i class="sad-face"></i>
+                            </div>
+                            <div class="description p-3 row">
+                                <h4 class="white">Overview</h4>
+                                <div class="pb-2 white fw-lighter">
+                                    <span class="release-date"></span> • <span class="genre"></span> • <span class="runtime"></span>
+                                </div>
+                                <p  class="overview white"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="list"></div>
+            <div class="pagination-buttons">
+                <button id="prevPage" class="button" disabled>Previous</button>
+                <button id="nextPage" class="button" disabled>Next</button>
+            </div>
+        </div>
+        <div id="setup" hidden>
+            <div class="main main-text">
+                <p style="font-size: 1.2em">SPARQL-QBE / Query By Example</p>
+                <p>Select and load one of the dataset in order to use the SPARQL-QBE tool.</p>
+                <div class="form-holder">
+                    <form>
+                        <table>
+                            <tr>
+                                <td>Dataset:</td>
+                                <td>
+                                    <select name="data"></select>
+                                </td>
+                                <td></td>
+                            </tr>
+                            <tr>
+                                <td>Assist:</td>
+                                <td>
+                                    <input type="checkbox" name="testing" checked>
+                                </td>
+                                <td></td>
+                            </tr>
+                            <tr>
+                                <td></td>
+                                <td></td>
+                                <td>
+                                    <div class="button" tabindex="0" role="button" onclick="q('form').submit()">Load</div>
+                                </td>
+                            </tr>
+                            <tr id="form_input" hidden>
+                                <td>Input:</td>
+                                <td colspan="2">
+                                    <textarea name="input" style="width: 100%"
+                                        placeholder="dbr:movie1 rdf:type dbo:Film ."></textarea>
+                                </td>
+                            </tr>
+                            <script>
+                                var datasets_list = [
+                                    // ["datasets/moviesactors.js", "MoviesActors"],
+                                    // ["datasets/papers.ttl.js", "Papers"],
+                                    ["datasets/movies.js", "Movies"],
+                                    // ["datasets/actors.js", "Actors"],
+                                    // ["datasets/example.ttl.js", "Example"],
+                                    // ["input", "Custom RDF data"]
+                                ]
+                                var datasets_names = Object.fromEntries(datasets_list)
+                                var select_input = document.querySelector("form select")
+                                for (var i of datasets_list) {
+                                    select_input.innerHTML += `<option value="${i[0]}">${i[1]}</option>`;
+                                }
+                                select_input.addEventListener("change", () => {
+                                    document.querySelector("#form_input").hidden = document.querySelector("form select").value != "input"
+                                }
+                                );
+                            </script>
+                        </table>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="about" hidden>
+        <div class="main main-text">
+            <p style="font-size: 1.2em">SPARQL-QBE / Query By Example</p>
+            <p>SPARQL-QBE is an interactive example based method for formulating queries that utilises a feedback loop.
+
+            <p>
+                The user provides two or more entities that may have been discovered while browsing or by keyword
+                search. We then compute one query whose result contains the provided plus other entities that have
+                commonalities with the entities provided by the user. Then the user can refine the formulated answer
+                (and query) by providing interactively positive/negative feedback, by selecting/rejecting constraints
+                that are given to the user, as well as positive/negative examples.
+                <br>
+            <p>
+                An introductory tutorial video can be found <a href="https://youtu.be/k9OZ3vSaUmQ"
+                    target="_blank">here</a>
+                .
+                <br>
+                <br>
+            <p>
+                You can find more information in the following:
+                <br>
+                - Akritas Akritidis, Yannis Tzitzikas,
+                <a href="http://users.ics.forth.gr/~tzitzik/publications/Tzitzikas_2023-EDBT-SPARQL-QBE.pdf">Demonstrating
+                    Interactive SPARQL Formulation through Positive and Negative Examples and Feedback</a>
+                (Demo Paper),
+                EDBT/ICDT 2023 Joint Conference (EDBT 2023).
+                <br>
+                - Akritas Akritidis, Yannis Tzitzikas,
+                <a href="https://users.ics.forth.gr/~tzitzik/publications/Tzitzikas_2024-JIIS.pdf">Querying Knowledge
+                    Graphs through Positive and Negative Examples and Feedback</a>
+                Journal of Intelligent Information Systems (JIIS), 2024 (accepted for publication).
+                <br>
+                <br>
+            <p>
+                Created by:
+                <br>
+                - <a href="https://maanoo.com/">Akritas Akritidis</a>
+                (FORTH-ICS and Computer Science Department, University of Crete)
+                <br>
+                - <a href="https://users.ics.forth.gr/~tzitzik/">Yannis Tzitzikas</a>
+                (FORTH-ICS and Computer Science Department, University of Crete)
+                <br>
+                - Maria Foteini Troupi (Computer Science Department, University of Crete))
+
+                <br>
+                <br>
+            <p>
+                Current version 3.0 (2023w06)
+                <br>
+            <p>
+                <a href="http://www.ics.forth.gr/isl/sar/privacy/TermsOfUse-ISL_EN.pdf">Terms of Use</a>
+                -
+                <a href="http://www.ics.forth.gr/isl/sar/privacy/PrivacyPolicy-ISL_EN.pdf">Privacy Policy</a>
+                -
+                &copy;2020 FOUNDATION FOR RESEARCH & TECHNOLOGY - HELLAS, All rights reserved.
+
+        </div>
+    </div>
+    <div class="footer">
+        <div class="container">
+          <p>
+              You can find more about the SPARQL-QBE tool
+              <a href="?about">here</a>
+              and watch a introductory tutorial video
+              <a href="https://youtu.be/k9OZ3vSaUmQ" target="_blank">here</a>
+              .
+          </p>
+          <p>The MovieHunt project is documented in the report: 
+            <a href="media/report.pdf" target="_blank" rel="noopener noreferrer">
+                Enriching the Demo of SPARQL-QBE over Movies with Images</a>.
+            </p>
+          <p>
+              <span style="font-weight: 700;">Created by</span> <br>
+              <a href="https://maanoo.com/" style="font-size: 14px;">Akritas Akritidis</a><br>
+              FORTH-ICS and Computer Science Department, University of Crete <br>
+              <a href="https://users.ics.forth.gr/~tzitzik/"  style="font-size: 14px;">Yannis Tzitzikas</a> <br>
+              FORTH-ICS and Computer Science Department, University of Crete <br>
+              <span style="font-size: 14px; color: #ffb703;">Maria Foteini Troupi</span> <br> 
+              Computer Science Department, University of Crete
+          </p>
+          <div class="attribution-tmbd">
+            <a href="https://www.themoviedb.org">
+                <img src="media/TMBd_logo.svg" alt="The Movie Database (TMDB)" width="70" height="35">
+            </a>
+            <span class="">This website uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.</span>
+          </div>
+          <div>  
+          <p>
+              <a href="http://www.ics.forth.gr/isl/sar/privacy/TermsOfUse-ISL_EN.pdf">Terms of Use</a>
+              -
+              <a href="http://www.ics.forth.gr/isl/sar/privacy/PrivacyPolicy-ISL_EN.pdf">Privacy Policy</a>
+              -
+              &copy;2023 FOUNDATION FOR RESEARCH & TECHNOLOGY - HELLAS, All rights reserved.
+          </div>   
+      </div>
+    <div id="message" hidden>
+        <div class="close" onclick="message_close()"><i class="icon close"></i></div>
+        <div class="text"></div>
+    </div>
+    <script src="main.js"></script>
+    <script src="dev.js"></script>
+    <script src="moviesImgs.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
+</body>
+
+</html>
